@@ -19,7 +19,7 @@ import {
   MONTHS,
   getMonthName,
 } from "@/lib/currency-service";
-import { getCategoryConfig } from "@/lib/category-config";
+import { getCategoryConfig, CATEGORY_NAMES } from "@/lib/category-config";
 import * as Haptics from "expo-haptics";
 import { useRouter } from "expo-router";
 
@@ -204,7 +204,7 @@ export default function AddExpenseScreen() {
   const [year, setYear] = useState(today.getFullYear().toString());
   const [amount, setAmount] = useState("");
   const [currency, setCurrency] = useState("EUR");
-  const [categoryId, setCategoryId] = useState<number | undefined>(undefined);
+  const [categoryName, setCategoryName] = useState<string>(CATEGORY_NAMES[0]);
   const [note, setNote] = useState("");
   const [amountEur, setAmountEur] = useState("");
   const [exchangeRate, setExchangeRate] = useState("");
@@ -213,14 +213,7 @@ export default function AddExpenseScreen() {
   const [showCurrencyPicker, setShowCurrencyPicker] = useState(false);
   const [showCategoryPicker, setShowCategoryPicker] = useState(false);
 
-  const { data: categories = [] } = trpc.categories.list.useQuery();
   const addExpense = trpc.sheet.addExpense.useMutation();
-
-  useEffect(() => {
-    if (categories.length > 0 && categoryId === undefined) {
-      setCategoryId(categories[0].id);
-    }
-  }, [categories, categoryId]);
 
   useEffect(() => {
     const num = parseFloat(amount);
@@ -249,11 +242,8 @@ export default function AddExpenseScreen() {
     if (!day || !month || !year) return Alert.alert("Validation", "Please enter a valid date.");
     const amtNum = parseFloat(amount);
     if (!amount || isNaN(amtNum) || amtNum <= 0) return Alert.alert("Validation", "Please enter a valid amount.");
-    if (!categoryId) return Alert.alert("Validation", "Please select a category.");
-    if (!amountEur) return Alert.alert("Please wait", "Currency conversion is still in progress.");
-
-    const categoryName = categories.find((c) => c.id === categoryId)?.name;
     if (!categoryName) return Alert.alert("Validation", "Please select a category.");
+    if (!amountEur) return Alert.alert("Please wait", "Currency conversion is still in progress.");
 
     setLoading(true);
     try {
@@ -277,6 +267,7 @@ export default function AddExpenseScreen() {
       setYear(today.getFullYear().toString());
       setAmount("");
       setCurrency("EUR");
+      setCategoryName(CATEGORY_NAMES[0]);
       setNote("");
       setAmountEur("");
       setExchangeRate("");
@@ -297,9 +288,8 @@ export default function AddExpenseScreen() {
     ? `${selectedCurrency.code}  —  ${selectedCurrency.name}`
     : currency;
 
-  const selectedCategory = categories.find((c) => c.id === categoryId);
-  const selectedCategoryLabel = selectedCategory?.name ?? "";
-  const selectedCategoryConfig = selectedCategory ? getCategoryConfig(selectedCategory.name) : null;
+  const selectedCategoryLabel = categoryName;
+  const selectedCategoryConfig = getCategoryConfig(categoryName);
 
   return (
     <ScreenContainer>
@@ -648,14 +638,14 @@ export default function AddExpenseScreen() {
             </TouchableOpacity>
           </View>
           <FlatList
-            data={categories}
-            keyExtractor={(item) => String(item.id)}
+            data={CATEGORY_NAMES}
+            keyExtractor={(name) => name}
             renderItem={({ item }) => {
-              const isSelected = item.id === categoryId;
-              const cfg = getCategoryConfig(item.name);
+              const isSelected = item === categoryName;
+              const cfg = getCategoryConfig(item);
               return (
                 <TouchableOpacity
-                  onPress={() => { setCategoryId(item.id); setShowCategoryPicker(false); }}
+                  onPress={() => { setCategoryName(item); setShowCategoryPicker(false); }}
                   style={{
                     paddingHorizontal: 20,
                     paddingVertical: 13,
@@ -678,7 +668,7 @@ export default function AddExpenseScreen() {
                     <Text style={{ fontSize: 20 }}>{cfg.icon}</Text>
                   </View>
                   <Text style={{ fontSize: 16, fontWeight: isSelected ? "700" : "400", color: isSelected ? "#0a7ea4" : "#11181C", flex: 1 }}>
-                    {item.name}
+                    {item}
                   </Text>
                   {isSelected && <Text style={{ color: "#0a7ea4", fontSize: 18, fontWeight: "700" }}>✓</Text>}
                 </TouchableOpacity>
