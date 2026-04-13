@@ -206,6 +206,7 @@ export default function AddExpenseScreen() {
   const [amount, setAmount] = useState("");
   const [currency, setCurrency] = useState("EUR");
   const [categoryName, setCategoryName] = useState<string>(CATEGORY_NAMES[0]);
+  const [categoryName, setCategoryName] = useState<string>(CATEGORY_NAMES[0]);
   const [note, setNote] = useState("");
   const [amountEur, setAmountEur] = useState("");
   const [exchangeRate, setExchangeRate] = useState("");
@@ -250,6 +251,7 @@ export default function AddExpenseScreen() {
     if (!day || !month || !year) return Alert.alert("Validation", "Please enter a valid date.");
     const amtNum = parseFloat(amount);
     if (!amount || isNaN(amtNum) || amtNum <= 0) return Alert.alert("Validation", "Please enter a valid amount.");
+    if (!categoryName) return Alert.alert("Validation", "Please select a category.");
     if (!categoryName) return Alert.alert("Validation", "Please select a category.");
     if (!amountEur) return Alert.alert("Please wait", "Currency conversion is still in progress.");
 
@@ -297,6 +299,8 @@ export default function AddExpenseScreen() {
     ? `${selectedCurrency.code}  —  ${selectedCurrency.name}`
     : currency;
 
+  const selectedCategoryLabel = categoryName;
+  const selectedCategoryConfig = getCategoryConfig(categoryName);
   const selectedCategoryLabel = categoryName;
   const selectedCategoryConfig = getCategoryConfig(categoryName);
 
@@ -649,11 +653,16 @@ export default function AddExpenseScreen() {
           <FlatList
             data={CATEGORY_NAMES}
             keyExtractor={(name) => name}
+            data={CATEGORY_NAMES}
+            keyExtractor={(name) => name}
             renderItem={({ item }) => {
+              const isSelected = item === categoryName;
+              const cfg = getCategoryConfig(item);
               const isSelected = item === categoryName;
               const cfg = getCategoryConfig(item);
               return (
                 <TouchableOpacity
+                  onPress={() => { setCategoryName(item); setShowCategoryPicker(false); }}
                   onPress={() => { setCategoryName(item); setShowCategoryPicker(false); }}
                   style={{
                     paddingHorizontal: 20,
@@ -677,6 +686,7 @@ export default function AddExpenseScreen() {
                     <Text style={{ fontSize: 20 }}>{cfg.icon}</Text>
                   </View>
                   <Text style={{ fontSize: 16, fontWeight: isSelected ? "700" : "400", color: isSelected ? "#0a7ea4" : "#11181C", flex: 1 }}>
+                    {item}
                     {item}
                   </Text>
                   {isSelected && <Text style={{ color: "#0a7ea4", fontSize: 18, fontWeight: "700" }}>✓</Text>}
