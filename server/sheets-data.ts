@@ -340,6 +340,52 @@ export async function appendExpenseToSheet(expense: {
 }
 
 /**
+ * Update an existing expense row in the Journal sheet.
+ * Overwrites columns A-H of the given 1-based rowIndex.
+ */
+export async function updateExpenseInSheet(
+  rowIndex: number,
+  expense: {
+    amountOriginal: number;
+    currency: string;
+    day: number;
+    month: string;
+    year: number;
+    amountEur: number;
+    category: string;
+    note: string;
+  }
+): Promise<void> {
+  const token = await getServiceAccountToken();
+  const sheetId = ENV.GOOGLE_SHEET_ID;
+
+  const rowData = [
+    expense.amountOriginal,
+    expense.currency,
+    expense.day,
+    expense.month,
+    expense.year,
+    expense.amountEur,
+    expense.category,
+    expense.note,
+  ];
+
+  const res = await fetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/Journal!A${rowIndex}:H${rowIndex}?valueInputOption=USER_ENTERED`,
+    {
+      method: "PUT",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ values: [rowData] }),
+    }
+  );
+
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(`Failed to update row ${rowIndex}: ${err.error?.message}`);
+  }
+}
+
+/**
  * Delete an expense row from the Journal sheet by its 1-based row index.
  */
 export async function deleteExpenseFromSheet(rowIndex: number, journalSheetGid?: number): Promise<void> {

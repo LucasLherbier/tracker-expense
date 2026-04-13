@@ -9,10 +9,18 @@ import {
   RefreshControl,
   TextInput,
   Platform,
+  Modal,
+  ScrollView,
 } from "react-native";
 import { ScreenContainer } from "@/components/screen-container";
 import { trpc } from "@/lib/trpc";
 import * as Haptics from "expo-haptics";
+import {
+  convertToEUR,
+  SUPPORTED_CURRENCIES,
+  MONTHS,
+} from "@/lib/currency-service";
+import { getCategoryConfig, CATEGORY_NAMES } from "@/lib/category-config";
 
 const MONTHS_FULL = [
   "Janvier", "Février", "Mars", "Avril", "Mai", "Juin",
@@ -68,6 +76,12 @@ function getCategoryColor(category: string): string {
   return CATEGORY_COLORS[Math.abs(hash)];
 }
 
+const PRIORITY_CURRENCIES = ["EUR", "USD", "CAD", "GBP", "CHF"];
+const orderedCurrencies = [
+  ...SUPPORTED_CURRENCIES.filter((c) => PRIORITY_CURRENCIES.includes(c.code)),
+  ...SUPPORTED_CURRENCIES.filter((c) => !PRIORITY_CURRENCIES.includes(c.code)),
+];
+
 type SheetExpense = {
   rowIndex: number;
   amountOriginal: number;
@@ -84,10 +98,506 @@ type ListItem =
   | { type: "header"; key: string; title: string; total: number }
   | { type: "expense"; expense: SheetExpense };
 
+// ─── Mini picker modals used inside the edit sheet ───────────────────────────
+
+function PickerModal<T extends string | number>({
+  visible,
+  title,
+  items,
+  selected,
+  onSelect,
+  onClose,
+}: {
+  visible: boolean;
+  title: string;
+  items: { label: string; value: T }[];
+  selected: T;
+  onSelect: (v: T) => void;
+  onClose: () => void;
+}) {
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <TouchableOpacity
+        style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.45)" }}
+        activeOpacity={1}
+        onPress={onClose}
+      />
+      <View
+        style={{
+          position: "absolute",
+          bottom: 0,
+          left: 0,
+          right: 0,
+          backgroundColor: "#fff",
+          borderTopLeftRadius: 24,
+          borderTopRightRadius: 24,
+          maxHeight: "60%",
+          paddingBottom: 34,
+        }}
+      >
+        <View style={{ alignItems: "center", paddingTop: 12, paddingBottom: 4 }}>
+          <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: "#E5E7EB" }} />
+        </View>
+        <View
+          style={{
+            flexDirection: "row",
+            justifyContent: "space-between",
+            alignItems: "center",
+            paddingHorizontal: 20,
+            paddingVertical: 14,
+            borderBottomWidth: 0.5,
+            borderBottomColor: "#E5E7EB",
+          }}
+        >
+          <Text style={{ fontSize: 17, fontWeight: "700", color: "#11181C" }}>{title}</Text>
+          <TouchableOpacity
+            onPress={onClose}
+            style={{ backgroundColor: "#F3F4F6", borderRadius: 50, paddingHorizontal: 14, paddingVertical: 6 }}
+          >
+            <Text style={{ fontSize: 14, color: "#374151", fontWeight: "600" }}>Done</Text>
+          </TouchableOpacity>
+        </View>
+        <FlatList
+          data={items}
+          keyExtractor={(item) => String(item.value)}
+          renderItem={({ item }) => {
+            const isSel = item.value === selected;
+            return (
+              <TouchableOpacity
+                onPress={() => { onSelect(item.value); onClose(); }}
+                style={{
+                  paddingHorizontal: 20,
+                  paddingVertical: 14,
+                  flexDirection: "row",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  backgroundColor: isSel ? "#EFF6FF" : "transparent",
+                }}
+              >
+                <Text style={{ fontSize: 16, color: isSel ? "#0a7ea4" : "#11181C", fontWeight: isSel ? "600" : "400" }}>
+                  {item.label}
+                </Text>
+                {isSel && <Text style={{ color: "#0a7ea4", fontSize: 18, fontWeight: "700" }}>✓</Text>}
+              </TouchableOpacity>
+            );
+          }}
+        />
+      </View>
+    </Modal>
+  );
+}
+
+// ─── Edit Expense Modal ───────────────────────────────────────────────────────
+
+function EditExpenseModal({
+  expense,
+  onClose,
+  onSaved,
+}: {
+  expense: SheetExpense;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [day, setDay] = useState(String(expense.day));
+  const [month, setMonth] = useState(expense.month);
+  const [year, setYear] = useState(String(expense.year));
+  const [amount, setAmount] = useState(String(expense.amountOriginal));
+  const [currency, setCurrency] = useState(expense.currency);
+  const [amountEur, setAmountEur] = useState(String(expense.amountEur));
+  const [category, setCategory] = useState(expense.category);
+  const [note, setNote] = useState(expense.note);
+  const [converting, setConverting] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  const [showMonthPicker, setShowMonthPicker] = useState(false);
+  const [showCurrencyPicker, setShowCurrencyPicker] = useState(false);
+  const [showCategoryPicker, setShowCategoryPicker] = useState(false);
+
+  const updateExpense = trpc.sheet.updateExpense.useMutation();
+  const utils = trpc.useUtils();
+
+  const handleAmountChange = (val: string) => {
+    setAmount(val);
+    const num = parseFloat(val);
+    if (!isNaN(num) && num > 0) {
+      convertAmount(num, currency);
+    } else {
+      setAmountEur("");
+    }
+  };
+
+  const handleCurrencyChange = (code: string) => {
+    setCurrency(code);
+    const num = parseFloat(amount);
+    if (!isNaN(num) && num > 0) {
+      convertAmount(num, code);
+    }
+  };
+
+  const convertAmount = async (num: number, fromCurrency: string) => {
+    setConverting(true);
+    try {
+      const result = await convertToEUR(num, fromCurrency);
+      setAmountEur(result.amountEur.toFixed(2));
+    } catch {
+      // keep previous value
+    } finally {
+      setConverting(false);
+    }
+  };
+
+  const handleSave = async () => {
+    if (!day || !month || !year) return Alert.alert("Validation", "Please enter a valid date.");
+    const amtNum = parseFloat(amount);
+    if (!amount || isNaN(amtNum) || amtNum <= 0) return Alert.alert("Validation", "Please enter a valid amount.");
+    if (!category) return Alert.alert("Validation", "Please select a category.");
+    if (!amountEur) return Alert.alert("Please wait", "Currency conversion is still in progress.");
+
+    setSaving(true);
+    try {
+      await updateExpense.mutateAsync({
+        rowIndex: expense.rowIndex,
+        day: parseInt(day),
+        month,
+        year: parseInt(year),
+        amountOriginal: amtNum,
+        currency,
+        amountEur: parseFloat(amountEur),
+        category,
+        note: note || undefined,
+      });
+
+      utils.sheet.allExpenses.invalidate();
+      utils.sheet.homeStats.invalidate();
+
+      if (Platform.OS !== "web") {
+        await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      }
+      onSaved();
+    } catch (err) {
+      Alert.alert("Error", err instanceof Error ? err.message : "Failed to save changes.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const selectedCurrencyInfo = orderedCurrencies.find((c) => c.code === currency);
+  const selectedCatCfg = getCategoryConfig(category);
+
+  return (
+    <Modal visible animationType="slide" onRequestClose={onClose}>
+      <View style={{ flex: 1, backgroundColor: "#F9FAFB" }}>
+        {/* Header */}
+        <View
+          style={{
+            backgroundColor: "#fff",
+            paddingTop: Platform.OS === "ios" ? 56 : 24,
+            paddingBottom: 16,
+            paddingHorizontal: 20,
+            borderBottomWidth: 1,
+            borderBottomColor: "#E5E7EB",
+            flexDirection: "row",
+            alignItems: "center",
+            justifyContent: "space-between",
+          }}
+        >
+          <TouchableOpacity onPress={onClose}>
+            <Text style={{ fontSize: 16, color: "#0a7ea4", fontWeight: "600" }}>Cancel</Text>
+          </TouchableOpacity>
+          <Text style={{ fontSize: 17, fontWeight: "700", color: "#11181C" }}>Edit Expense</Text>
+          <TouchableOpacity onPress={handleSave} disabled={saving || converting}>
+            {saving ? (
+              <ActivityIndicator size="small" color="#0a7ea4" />
+            ) : (
+              <Text style={{ fontSize: 16, color: saving || converting ? "#9BA1A6" : "#0a7ea4", fontWeight: "700" }}>
+                Save
+              </Text>
+            )}
+          </TouchableOpacity>
+        </View>
+
+        <ScrollView
+          contentContainerStyle={{ padding: 20, paddingBottom: 60 }}
+          keyboardShouldPersistTaps="handled"
+        >
+          {/* Date */}
+          <Text style={{ fontSize: 13, fontWeight: "600", color: "#9BA1A6", letterSpacing: 0.5, marginBottom: 8 }}>
+            DATE
+          </Text>
+          <View style={{ flexDirection: "row", gap: 10, marginBottom: 20 }}>
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontSize: 12, color: "#9BA1A6", marginBottom: 6 }}>Day</Text>
+              <TextInput
+                style={{
+                  backgroundColor: "#fff",
+                  borderWidth: 1.5,
+                  borderColor: "#E5E7EB",
+                  borderRadius: 12,
+                  paddingHorizontal: 14,
+                  paddingVertical: 13,
+                  fontSize: 16,
+                  color: "#11181C",
+                  fontWeight: "500",
+                  textAlign: "center",
+                }}
+                value={day}
+                onChangeText={setDay}
+                keyboardType="number-pad"
+                placeholder="DD"
+                placeholderTextColor="#C9CDD2"
+                maxLength={2}
+              />
+            </View>
+            <View style={{ flex: 2 }}>
+              <Text style={{ fontSize: 12, color: "#9BA1A6", marginBottom: 6 }}>Month</Text>
+              <TouchableOpacity
+                onPress={() => setShowMonthPicker(true)}
+                style={{
+                  backgroundColor: "#fff",
+                  borderWidth: 1.5,
+                  borderColor: "#E5E7EB",
+                  borderRadius: 12,
+                  paddingHorizontal: 14,
+                  paddingVertical: 13,
+                  flexDirection: "row",
+                  alignItems: "center",
+                }}
+              >
+                <Text style={{ flex: 1, fontSize: 15, color: "#11181C", fontWeight: "500" }}>{month}</Text>
+                <Text style={{ color: "#9BA1A6" }}>▾</Text>
+              </TouchableOpacity>
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontSize: 12, color: "#9BA1A6", marginBottom: 6 }}>Year</Text>
+              <TextInput
+                style={{
+                  backgroundColor: "#fff",
+                  borderWidth: 1.5,
+                  borderColor: "#E5E7EB",
+                  borderRadius: 12,
+                  paddingHorizontal: 14,
+                  paddingVertical: 13,
+                  fontSize: 16,
+                  color: "#11181C",
+                  fontWeight: "500",
+                  textAlign: "center",
+                }}
+                value={year}
+                onChangeText={setYear}
+                keyboardType="number-pad"
+                placeholder="YYYY"
+                placeholderTextColor="#C9CDD2"
+                maxLength={4}
+              />
+            </View>
+          </View>
+
+          {/* Amount */}
+          <Text style={{ fontSize: 13, fontWeight: "600", color: "#9BA1A6", letterSpacing: 0.5, marginBottom: 8 }}>
+            AMOUNT
+          </Text>
+          <TextInput
+            style={{
+              backgroundColor: "#fff",
+              borderWidth: 1.5,
+              borderColor: "#E5E7EB",
+              borderRadius: 12,
+              paddingHorizontal: 16,
+              paddingVertical: 14,
+              fontSize: 26,
+              color: "#11181C",
+              fontWeight: "700",
+              marginBottom: 10,
+            }}
+            value={amount}
+            onChangeText={handleAmountChange}
+            keyboardType="decimal-pad"
+            placeholder="0.00"
+            placeholderTextColor="#C9CDD2"
+          />
+
+          {/* Currency */}
+          <Text style={{ fontSize: 12, color: "#9BA1A6", marginBottom: 6 }}>Currency</Text>
+          <TouchableOpacity
+            onPress={() => setShowCurrencyPicker(true)}
+            style={{
+              backgroundColor: "#fff",
+              borderWidth: 1.5,
+              borderColor: "#E5E7EB",
+              borderRadius: 12,
+              paddingHorizontal: 14,
+              paddingVertical: 13,
+              flexDirection: "row",
+              alignItems: "center",
+              gap: 10,
+              marginBottom: 10,
+            }}
+          >
+            <View
+              style={{
+                width: 32,
+                height: 32,
+                borderRadius: 8,
+                backgroundColor: "#EFF6FF",
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              <Text style={{ fontSize: 14, fontWeight: "700", color: "#0a7ea4" }}>
+                {selectedCurrencyInfo?.symbol ?? currency}
+              </Text>
+            </View>
+            <Text style={{ flex: 1, fontSize: 15, color: "#11181C", fontWeight: "500" }}>
+              {currency}  —  {selectedCurrencyInfo?.name ?? ""}
+            </Text>
+            <Text style={{ color: "#9BA1A6" }}>▾</Text>
+          </TouchableOpacity>
+
+          {/* Conversion indicator */}
+          {converting && (
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 10 }}>
+              <ActivityIndicator size="small" color="#0a7ea4" />
+              <Text style={{ fontSize: 14, color: "#9BA1A6" }}>Converting…</Text>
+            </View>
+          )}
+          {amountEur !== "" && !converting && (
+            <View
+              style={{
+                backgroundColor: currency === "EUR" ? "#F0FDF4" : "#EFF6FF",
+                borderRadius: 12,
+                padding: 12,
+                borderWidth: 1,
+                borderColor: currency === "EUR" ? "#BBF7D0" : "#BFDBFE",
+                flexDirection: "row",
+                alignItems: "center",
+                gap: 8,
+                marginBottom: 20,
+              }}
+            >
+              <Text style={{ fontSize: 20, fontWeight: "800", color: currency === "EUR" ? "#16A34A" : "#0a7ea4" }}>
+                € {parseFloat(amountEur).toFixed(2)}
+              </Text>
+            </View>
+          )}
+
+          {/* Category */}
+          <Text style={{ fontSize: 13, fontWeight: "600", color: "#9BA1A6", letterSpacing: 0.5, marginBottom: 8 }}>
+            CATEGORY
+          </Text>
+          <TouchableOpacity
+            onPress={() => setShowCategoryPicker(true)}
+            style={{
+              backgroundColor: "#fff",
+              borderWidth: 1.5,
+              borderColor: "#E5E7EB",
+              borderRadius: 12,
+              paddingHorizontal: 14,
+              paddingVertical: 13,
+              flexDirection: "row",
+              alignItems: "center",
+              gap: 10,
+              marginBottom: 20,
+            }}
+          >
+            <View
+              style={{
+                width: 36,
+                height: 36,
+                borderRadius: 10,
+                backgroundColor: selectedCatCfg?.bgColor ?? "#F3F4F6",
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              <Text style={{ fontSize: 20 }}>{selectedCatCfg?.icon ?? "📦"}</Text>
+            </View>
+            <Text style={{ flex: 1, fontSize: 15, color: "#11181C", fontWeight: "500" }}>{category}</Text>
+            <Text style={{ color: "#9BA1A6" }}>▾</Text>
+          </TouchableOpacity>
+
+          {/* Note */}
+          <Text style={{ fontSize: 13, fontWeight: "600", color: "#9BA1A6", letterSpacing: 0.5, marginBottom: 8 }}>
+            NOTE (OPTIONAL)
+          </Text>
+          <TextInput
+            style={{
+              backgroundColor: "#fff",
+              borderWidth: 1.5,
+              borderColor: "#E5E7EB",
+              borderRadius: 12,
+              paddingHorizontal: 16,
+              paddingVertical: 14,
+              fontSize: 16,
+              color: "#11181C",
+              minHeight: 80,
+              textAlignVertical: "top",
+              marginBottom: 28,
+            }}
+            value={note}
+            onChangeText={setNote}
+            placeholder="Add a description…"
+            placeholderTextColor="#C9CDD2"
+            multiline
+            numberOfLines={3}
+          />
+
+          {/* Save button */}
+          <TouchableOpacity
+            onPress={handleSave}
+            disabled={saving || converting}
+            style={{
+              backgroundColor: "#0a7ea4",
+              borderRadius: 16,
+              paddingVertical: 17,
+              alignItems: "center",
+              opacity: saving || converting ? 0.5 : 1,
+            }}
+          >
+            {saving ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <Text style={{ color: "#fff", fontSize: 17, fontWeight: "700" }}>Save Changes</Text>
+            )}
+          </TouchableOpacity>
+        </ScrollView>
+
+        {/* Sub-pickers */}
+        <PickerModal
+          visible={showMonthPicker}
+          title="Select Month"
+          items={MONTHS.map((m) => ({ label: m, value: m }))}
+          selected={month}
+          onSelect={setMonth}
+          onClose={() => setShowMonthPicker(false)}
+        />
+        <PickerModal
+          visible={showCurrencyPicker}
+          title="Select Currency"
+          items={orderedCurrencies.map((c) => ({ label: `${c.code}  —  ${c.name}`, value: c.code }))}
+          selected={currency}
+          onSelect={handleCurrencyChange}
+          onClose={() => setShowCurrencyPicker(false)}
+        />
+        <PickerModal
+          visible={showCategoryPicker}
+          title="Select Category"
+          items={CATEGORY_NAMES.map((n) => ({ label: n, value: n }))}
+          selected={category}
+          onSelect={setCategory}
+          onClose={() => setShowCategoryPicker(false)}
+        />
+      </View>
+    </Modal>
+  );
+}
+
+// ─── Main Journal Screen ──────────────────────────────────────────────────────
+
 export default function JournalScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [search, setSearch] = useState("");
   const [deletingRow, setDeletingRow] = useState<number | null>(null);
+  const [editingExpense, setEditingExpense] = useState<SheetExpense | null>(null);
 
   const utils = trpc.useUtils();
 
@@ -142,7 +652,6 @@ export default function JournalScreen() {
     const structured = parseMonthYearQuery(q);
 
     if (structured && (structured.month || structured.year)) {
-      // Structured month/year filter
       return (expenses as SheetExpense[]).filter((e) => {
         const monthMatch = structured.month ? e.month === structured.month : true;
         const yearMatch = structured.year ? e.year === structured.year : true;
@@ -150,7 +659,6 @@ export default function JournalScreen() {
       });
     }
 
-    // Fallback: free-text search
     return (expenses as SheetExpense[]).filter(
       (e) =>
         e.category.toLowerCase().includes(q) ||
@@ -232,8 +740,12 @@ export default function JournalScreen() {
         {/* Left color accent */}
         <View style={{ width: 4, alignSelf: "stretch", backgroundColor: color }} />
 
-        {/* Content */}
-        <View style={{ flex: 1, padding: 13 }}>
+        {/* Content — tappable to edit */}
+        <TouchableOpacity
+          style={{ flex: 1, padding: 13 }}
+          onPress={() => setEditingExpense(expense)}
+          activeOpacity={0.7}
+        >
           <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" }}>
             <View style={{ flex: 1, marginRight: 8 }}>
               <Text style={{ fontSize: 15, fontWeight: "600", color: "#11181C" }} numberOfLines={1}>
@@ -257,9 +769,11 @@ export default function JournalScreen() {
                   {expense.currency} {expense.amountOriginal.toFixed(2)}
                 </Text>
               )}
+              {/* Edit hint */}
+              <Text style={{ fontSize: 11, color: "#C9CDD2", marginTop: 3 }}>✏️ tap to edit</Text>
             </View>
           </View>
-        </View>
+        </TouchableOpacity>
 
         {/* Delete button */}
         <TouchableOpacity
@@ -380,6 +894,15 @@ export default function JournalScreen() {
               </Text>
             </View>
           }
+        />
+      )}
+
+      {/* ── Edit Modal ── */}
+      {editingExpense && (
+        <EditExpenseModal
+          expense={editingExpense}
+          onClose={() => setEditingExpense(null)}
+          onSaved={() => setEditingExpense(null)}
         />
       )}
     </ScreenContainer>

@@ -9,6 +9,14 @@ export interface CategoryConfig {
   bgColor: string;    // light background for icon containers
 }
 
+/** Ordered list of category names (matches Google Sheet column G) */
+export const CATEGORY_NAMES = [
+  "Logement", "Nourriture", "Restaurant", "Bar/Café", "Transport",
+  "Sports", "Aviron", "Vacances", "Week End", "Soirée", "Multimédia",
+  "Vêtements", "Cadeau", "Spectacles", "Santé", "Education",
+  "Administratif", "Autres", "Impôts",
+] as const;
+
 const CATEGORY_MAP: Record<string, CategoryConfig> = {
   "Logement":       { icon: "🏠", color: "#6366F1", bgColor: "#EEF2FF" },
   "Nourriture":     { icon: "🛒", color: "#F59E0B", bgColor: "#FFFBEB" },

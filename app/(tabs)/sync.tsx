@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   View,
   Text,
@@ -8,14 +8,41 @@ import {
   Alert,
   RefreshControl,
   Platform,
+  Modal,
+  FlatList,
 } from "react-native";
 import { ScreenContainer } from "@/components/screen-container";
 import { trpc } from "@/lib/trpc";
 import * as Haptics from "expo-haptics";
+import { getDefaultCurrency, setDefaultCurrency } from "@/lib/settings-store";
+import { SUPPORTED_CURRENCIES } from "@/lib/currency-service";
+
+// Priority currencies shown first in the picker
+const PRIORITY_CURRENCIES = ["EUR", "USD", "CAD", "GBP", "CHF"];
+const orderedCurrencies = [
+  ...SUPPORTED_CURRENCIES.filter((c) => PRIORITY_CURRENCIES.includes(c.code)),
+  ...SUPPORTED_CURRENCIES.filter((c) => !PRIORITY_CURRENCIES.includes(c.code)),
+];
 
 export default function SyncScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [testing, setTesting] = useState(false);
+  const [defaultCurrency, setDefaultCurrencyState] = useState("EUR");
+  const [showCurrencyPicker, setShowCurrencyPicker] = useState(false);
+
+  // Load saved default currency on mount
+  useEffect(() => {
+    getDefaultCurrency().then(setDefaultCurrencyState);
+  }, []);
+
+  const handleSelectDefaultCurrency = async (code: string) => {
+    await setDefaultCurrency(code);
+    setDefaultCurrencyState(code);
+    setShowCurrencyPicker(false);
+    if (Platform.OS !== "web") {
+      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    }
+  };
 
   const utils = trpc.useUtils();
 
@@ -221,7 +248,55 @@ export default function SyncScreen() {
           </View>
         )}
 
-        {/* ── Column reference ── */}
+        {/* ── Input Currency for new expenses ── */}
+        <View style={{ marginHorizontal: 16, marginBottom: 20 }}>
+          <Text style={{ fontSize: 13, fontWeight: "700", color: "#9BA1A6", letterSpacing: 0.5, marginBottom: 12 }}>
+            ADD EXPENSE — DEFAULT INPUT CURRENCY
+          </Text>
+          <View style={{ backgroundColor: "#F9FAFB", borderRadius: 16, padding: 16, borderWidth: 1, borderColor: "#E5E7EB" }}>
+            <Text style={{ fontSize: 13, color: "#9BA1A6", marginBottom: 12, lineHeight: 18 }}>
+              Sets the currency pre-selected when you fill in a new expense. All totals and displays across the app always use <Text style={{ fontWeight: "700", color: "#11181C" }}>€ EUR</Text>.
+            </Text>
+            <TouchableOpacity
+              onPress={() => setShowCurrencyPicker(true)}
+              style={{
+                backgroundColor: "#fff",
+                borderRadius: 12,
+                borderWidth: 1.5,
+                borderColor: "#0a7ea4",
+                paddingHorizontal: 16,
+                paddingVertical: 14,
+                flexDirection: "row",
+                alignItems: "center",
+                gap: 12,
+              }}
+            >
+              <View
+                style={{
+                  width: 36,
+                  height: 36,
+                  borderRadius: 10,
+                  backgroundColor: "#EFF6FF",
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}
+              >
+                <Text style={{ fontSize: 14, fontWeight: "700", color: "#0a7ea4" }}>
+                  {SUPPORTED_CURRENCIES.find((c) => c.code === defaultCurrency)?.symbol || defaultCurrency}
+                </Text>
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 15, fontWeight: "600", color: "#11181C" }}>{defaultCurrency}</Text>
+                <Text style={{ fontSize: 13, color: "#9BA1A6" }}>
+                  {SUPPORTED_CURRENCIES.find((c) => c.code === defaultCurrency)?.name || ""}
+                </Text>
+              </View>
+              <Text style={{ color: "#9BA1A6", fontSize: 14 }}>▾</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+
+
         {isConnected && (
           <View style={{ marginHorizontal: 16, marginBottom: 20 }}>
             <Text style={{ fontSize: 13, fontWeight: "700", color: "#9BA1A6", letterSpacing: 0.5, marginBottom: 12 }}>
@@ -314,6 +389,109 @@ export default function SyncScreen() {
           </View>
         )}
       </ScrollView>
+
+      {/* ── Currency Picker Modal ── */}
+      <Modal visible={showCurrencyPicker} transparent animationType="slide" onRequestClose={() => setShowCurrencyPicker(false)}>
+        <TouchableOpacity
+          style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.45)" }}
+          activeOpacity={1}
+          onPress={() => setShowCurrencyPicker(false)}
+        />
+        <View
+          style={{
+            position: "absolute",
+            bottom: 0,
+            left: 0,
+            right: 0,
+            backgroundColor: "#fff",
+            borderTopLeftRadius: 24,
+            borderTopRightRadius: 24,
+            maxHeight: "70%",
+            paddingBottom: 34,
+          }}
+        >
+          <View style={{ alignItems: "center", paddingTop: 12, paddingBottom: 4 }}>
+            <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: "#E5E7EB" }} />
+          </View>
+          <View
+            style={{
+              flexDirection: "row",
+              justifyContent: "space-between",
+              alignItems: "center",
+              paddingHorizontal: 20,
+              paddingVertical: 14,
+              borderBottomWidth: 0.5,
+              borderBottomColor: "#E5E7EB",
+            }}
+          >
+            <Text style={{ fontSize: 17, fontWeight: "700", color: "#11181C" }}>Default Currency</Text>
+            <TouchableOpacity
+              onPress={() => setShowCurrencyPicker(false)}
+              style={{ backgroundColor: "#F3F4F6", borderRadius: 50, paddingHorizontal: 14, paddingVertical: 6 }}
+            >
+              <Text style={{ fontSize: 14, color: "#374151", fontWeight: "600" }}>Done</Text>
+            </TouchableOpacity>
+          </View>
+          <FlatList
+            data={orderedCurrencies}
+            keyExtractor={(item) => item.code}
+            ListHeaderComponent={
+              <Text style={{ fontSize: 12, fontWeight: "700", color: "#9BA1A6", letterSpacing: 0.5, paddingHorizontal: 20, paddingTop: 12, paddingBottom: 4 }}>
+                POPULAR
+              </Text>
+            }
+            renderItem={({ item, index }) => {
+              const isSelected = item.code === defaultCurrency;
+              const showDivider = index === PRIORITY_CURRENCIES.length - 1;
+              return (
+                <>
+                  <TouchableOpacity
+                    onPress={() => handleSelectDefaultCurrency(item.code)}
+                    style={{
+                      paddingHorizontal: 20,
+                      paddingVertical: 13,
+                      flexDirection: "row",
+                      alignItems: "center",
+                      gap: 12,
+                      backgroundColor: isSelected ? "#EFF6FF" : "transparent",
+                    }}
+                  >
+                    <View
+                      style={{
+                        width: 36,
+                        height: 36,
+                        borderRadius: 10,
+                        backgroundColor: isSelected ? "#DBEAFE" : "#F3F4F6",
+                        alignItems: "center",
+                        justifyContent: "center",
+                      }}
+                    >
+                      <Text style={{ fontSize: 14, fontWeight: "700", color: isSelected ? "#0a7ea4" : "#374151" }}>
+                        {item.symbol}
+                      </Text>
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ fontSize: 15, fontWeight: isSelected ? "700" : "500", color: isSelected ? "#0a7ea4" : "#11181C" }}>
+                        {item.code}
+                      </Text>
+                      <Text style={{ fontSize: 13, color: "#9BA1A6" }}>{item.name}</Text>
+                    </View>
+                    {isSelected && <Text style={{ color: "#0a7ea4", fontSize: 18, fontWeight: "700" }}>✓</Text>}
+                  </TouchableOpacity>
+                  {showDivider && (
+                    <View style={{ marginHorizontal: 20, marginVertical: 4 }}>
+                      <View style={{ height: 1, backgroundColor: "#E5E7EB" }} />
+                      <Text style={{ fontSize: 12, fontWeight: "700", color: "#9BA1A6", letterSpacing: 0.5, paddingTop: 8 }}>
+                        ALL CURRENCIES
+                      </Text>
+                    </View>
+                  )}
+                </>
+              );
+            }}
+          />
+        </View>
+      </Modal>
     </ScreenContainer>
   );
 }

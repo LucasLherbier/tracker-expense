@@ -1,7 +1,11 @@
 import { describe, it, expect } from "vitest";
+import path from "path";
+import { fileURLToPath } from "url";
+import { config } from "dotenv";
 
-// Load env vars the same way the server does
-import "../scripts/load-env.js";
+// Load .env from project root (Vitest cwd may differ)
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+config({ path: path.resolve(__dirname, "..", ".env") });
 
 describe("Google Service Account credentials", () => {
   it("GOOGLE_SA_EMAIL is set and looks valid", () => {

@@ -1,0 +1,27 @@
+{
+  "cli": {
+    "version": ">= 18.1.0",
+    "appVersionSource": "remote"
+  },
+  "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal"
+    },
+    "preview": {
+      "distribution": "internal"
+    },
+    "production": {
+      "autoIncrement": true,
+      "android": {
+        "buildType": "apk"
+      },
+      "env": {
+        "EXPO_PUBLIC_API_BASE_URL": "https://tracker-expense-yltt.onrender.com"
+      }
+    }
+  },
+  "submit": {
+    "production": {}
+  }
+}

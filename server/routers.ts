@@ -13,6 +13,7 @@ import {
   getAvailableYears,
   appendExpenseToSheet,
   deleteExpenseFromSheet,
+  updateExpenseInSheet,
 } from "./sheets-data";
 
 export const appRouter = router({
@@ -105,6 +106,32 @@ export const appRouter = router({
           note: input.note || "",
         });
         return { success: true, rowIndex };
+      }),
+
+    /** Update an existing expense row in the sheet */
+    updateExpense: publicProcedure
+      .input(
+        z.object({
+          rowIndex: z.number(),
+          amountOriginal: z.number(),
+          currency: z.string().length(3),
+          day: z.number().min(1).max(31),
+          month: z.string(),
+          year: z.number().min(2000).max(2100),
+          amountEur: z.number(),
+          category: z.string(),
+          note: z.string().optional(),
+        })
+      )
+      .mutation(async ({ input }) => {
+        if (!isServiceAccountConfigured()) {
+          throw new Error("Service account not configured.");
+        }
+        await updateExpenseInSheet(input.rowIndex, {
+          ...input,
+          note: input.note || "",
+        });
+        return { success: true };
       }),
 
     /** Delete an expense row from the sheet */
